@@ -122,6 +122,8 @@ openssl req -newkey rsa:2048 -nodes -subj "/CN=$PREFIX-db" \
 printf 'subjectAltName=DNS:%s\n' "$PREFIX-db" > "$WORK/ext"
 openssl x509 -req -days 1 -in "$WORK/server.csr" -CA "$WORK/ca.pem" -CAkey "$WORK/ca.key" \
   -CAcreateserial -extfile "$WORK/ext" -out "$WORK/server.pem" 2>/dev/null
+# Readable by the server's mysql user: mktemp -d creates the directory 0700
+chmod 755 "$WORK"
 chmod 644 "$WORK"/*
 docker network create "$PREFIX" >/dev/null
 
