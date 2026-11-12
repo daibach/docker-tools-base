@@ -1,0 +1,3 @@
+baseURL = "https://example.org/"
+title = "tools-parent smoke test"
+disableKinds = ["taxonomy", "term", "RSS", "sitemap"]

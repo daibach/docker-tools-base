@@ -1,0 +1,95 @@
+name: Scan images
+
+on:
+  schedule:
+    # Daily, to catch vulnerabilities disclosed since the images were built
+    - cron: "0 5 * * *"
+  # After every build that publishes images, so results match what was just
+  # published
+  workflow_run:
+    workflows: [Build images]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer scan supersedes one still running
+concurrency:
+  group: scan
+  cancel-in-progress: true
+
+env:
+  IMAGE: cedyrn/tools-parent
+
+jobs:
+  matrix:
+    name: Scan matrix
+    # After a build, only scan when it published: a successful build of main
+    # in this repository, not a pull request
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event != 'pull_request' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.images.outputs.images }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Images
+        id: images
+        run: |
+          images=$(.github/scripts/matrix.sh)
+          echo "images=${images}" >> "$GITHUB_OUTPUT"
+          echo "${images}" | jq .
+
+  # Scans each published image and reports to the repository's Security tab.
+  # Only vulnerabilities with a fix are reported. amd64 only: both
+  # architectures have the same package versions.
+  scan:
+    name: Scan ${{ matrix.name }}
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.images) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Trivy
+        uses: ./.github/actions/setup-trivy
+
+      - name: Scan ${{ env.IMAGE }}:${{ matrix.name }}
+        run: |
+          trivy image --image-src remote --platform linux/amd64 \
+            --scanners vuln --ignore-unfixed \
+            --format json --output trivy.json "${IMAGE}:${{ matrix.name }}"
+          trivy convert --format sarif --output trivy.sarif trivy.json
+          trivy convert --format table --severity HIGH,CRITICAL --output trivy.txt trivy.json
+          {
+            echo "### ${IMAGE}:${{ matrix.name }}: fixable HIGH and CRITICAL vulnerabilities"
+            echo '```'
+            cat trivy.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to Security tab
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy.sarif
+          category: tools-parent-${{ matrix.name }}

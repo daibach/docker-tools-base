@@ -1,0 +1,237 @@
+name: Build images
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Weekly rebuild to pick up Debian updates and the latest RDS CA bundle
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: cedyrn/tools-parent
+
+jobs:
+  matrix:
+    name: Build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.matrix.outputs.images }}
+      builds: ${{ steps.matrix.outputs.builds }}
+      build-date: ${{ steps.build-date.outputs.build-date }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Recorded in the image's build info. Set once so every architecture of
+      # a build has the same date.
+      - name: Build date
+        id: build-date
+        run: echo "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # One entry per image and architecture, each built natively
+      - name: Generate matrix
+        id: matrix
+        run: |
+          images=$(.github/scripts/matrix.sh)
+          builds=$(echo "${images}" | jq -c '
+            [ .[] as $image
+              | ( {arch: "amd64", platform: "linux/amd64", runner: "ubuntu-latest"},
+                  {arch: "arm64", platform: "linux/arm64", runner: "ubuntu-24.04-arm"} )
+              | . + $image ]
+          ')
+          echo "images=${images}" >> "$GITHUB_OUTPUT"
+          echo "builds=${builds}" >> "$GITHUB_OUTPUT"
+          echo "${builds}" | jq .
+
+  # Per image and architecture. Outside pull requests the image is pushed by
+  # digest only (no tag), then that exact digest is pulled and tested before
+  # it can be published.
+  build:
+    name: ${{ matrix.name }} (${{ matrix.arch }})
+    needs: matrix
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.builds) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pushing needs it, and every build pulls the debian and mariadb images,
+      # which anonymous pulls would rate limit
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: type=raw,value=${{ matrix.name }}
+
+      - name: Build
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            DEBIAN_VERSION=${{ matrix.debian }}
+            HUGO_VERSION=${{ matrix.hugo }}
+            BUILD_DATE=${{ needs.matrix.outputs.build-date }}
+            BUILD_REVISION=${{ github.sha }}
+            BUILD_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            BUILD_TAGS=${{ join(matrix.tags, ',') }}
+          pull: true
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=docker,name=tools-parent-test:build' }}
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+
+      - name: Select image to test
+        id: image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ref=tools-parent-test:build
+          else
+            ref="${IMAGE}@${DIGEST}"
+            docker pull "${ref}"
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: tests/smoke-test.sh "${REF}" "${{ matrix.debian }}" "${{ matrix.hugo }}"
+
+      - name: Record digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ matrix.name }}-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      # The scanner never sees the Docker Hub token
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout
+
+      - name: Set up Trivy
+        uses: ./.github/actions/setup-trivy
+
+      # Report only: findings never fail the build. Published images are also
+      # scanned daily by scan.yml.
+      - name: Vulnerability scan
+        continue-on-error: true
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          trivy image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL \
+            --format table --output trivy.txt "${REF}"
+          cat trivy.txt
+          {
+            echo "### ${{ matrix.name }} (${{ matrix.arch }}): fixable HIGH and CRITICAL vulnerabilities"
+            echo '```'
+            cat trivy.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Tags each image once every architecture has passed its tests
+  publish:
+    name: Publish ${{ matrix.name }}
+    needs: [matrix, build]
+    if: always() && github.event_name != 'pull_request' && needs.matrix.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.images) }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-${{ matrix.name }}-*
+          path: digests
+          merge-multiple: true
+
+      - name: Check every architecture passed
+        run: |
+          count=$(ls digests | wc -l)
+          echo "Found ${count} digests"
+          [ "${count}" -eq 2 ]
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Tag ${{ join(matrix.tags, ', ') }}
+        working-directory: digests
+        env:
+          TAGS: ${{ toJSON(matrix.tags) }}
+        run: |
+          args=()
+          while read -r tag; do
+            args+=(-t "${IMAGE}:${tag}")
+          done < <(echo "${TAGS}" | jq -r '.[]')
+          for digest in *; do
+            args+=("${IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${args[@]}"
+          docker buildx imagetools inspect "${IMAGE}:${{ matrix.name }}"
+
+  # Single required status check for branch protection, independent of which
+  # images are in the matrix.
+  result:
+    name: Build result
+    needs: [build, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all builds passed
+        run: |
+          test "${{ needs.build.result }}" = "success"
+          # Publishing is skipped on pull requests
+          case "${{ needs.publish.result }}" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac

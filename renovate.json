@@ -1,0 +1,142 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "customManagers:dockerfileVersions",
+    "customManagers:githubActionsVersions"
+  ],
+  "customManagers": [
+    {
+      "description": "Debian version in versions.json, looked up as debian image tags on Docker Hub",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^versions\\.json$/"
+      ],
+      "matchStrings": [
+        "\"debian\":\\s*\"(?<currentValue>\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "debian",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "description": "Hugo versions in versions.json, looked up as Hugo releases on GitHub",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^versions\\.json$/"
+      ],
+      "matchStrings": [
+        "\"\\d+\\.\\d+\":\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "gohugoio/hugo",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Offer Hugo patch updates separately, otherwise only the latest Hugo version is proposed",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "gohugoio/hugo"
+      ],
+      "separateMinorPatch": true
+    },
+    {
+      "description": "New Hugo minor versions (0.151 to 0.152) are added to versions.json by hand",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "gohugoio/hugo"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "New Debian major versions (13 to 14) are added to versions.json by hand",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "debian"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Auto-merge Hugo patch releases, grouped, once the build passes",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "gohugoio/hugo"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "groupName": "Hugo patch versions",
+      "minimumReleaseAge": "1 day",
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge Debian point releases (13.7 to 13.8, a minor update to Renovate) once the build passes. Docker Hub gives no release timestamps for debian, so timestamp-optional stops the release age check holding them as pending.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "debian"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "minimumReleaseAge": "1 day",
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge non-major AWS CLI updates a few days after release, once the build passes",
+      "matchDepNames": [
+        "aws/aws-cli"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "minimumReleaseAge": "3 days",
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge non-major GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Trivy is pinned by checksum, which must be updated by hand in the same PR",
+      "matchDepNames": [
+        "aquasecurity/trivy"
+      ],
+      "minimumReleaseAge": "3 days",
+      "automerge": false,
+      "prBodyNotes": [
+        "Update the matching `*_SHA256` checksums in `.github/actions/setup-trivy/action.yml` before merging. The build fails until they match."
+      ]
+    }
+  ]
+}

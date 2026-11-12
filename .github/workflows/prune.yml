@@ -1,0 +1,86 @@
+name: Prune tags
+
+on:
+  schedule:
+    # Weekly, after the Monday build and scan. Scheduled runs only list what
+    # would be deleted.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Delete the tags (otherwise only list them)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prune
+  cancel-in-progress: false
+
+env:
+  IMAGE: cedyrn/tools-parent
+
+jobs:
+  # Decides which old tags to delete, without any credentials. The plan is
+  # shown in the run's summary.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      delete: ${{ steps.plan.outputs.delete }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Plan
+        id: plan
+        run: |
+          .github/scripts/hub-tags.sh "${IMAGE}" | .github/scripts/prune-plan.sh > plan.json
+          jq . plan.json
+          delete=$(jq -c '[.[] | select(.action == "delete") | .name]' plan.json)
+          echo "delete=${delete}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### ${IMAGE}: tags"
+            echo
+            echo "| Tag | Last pulled | Action | Reason |"
+            echo "|---|---|---|---|"
+            jq -r '.[] | "| `\(.name)` | \(.last_pulled // "never" | .[:10]) | \(.action) | \(.reason) |"' plan.json
+            echo
+            if [ "${{ inputs.apply }}" = "true" ]; then
+              echo "Tags marked delete are deleted by the next job."
+            else
+              echo "Dry run: nothing is deleted. Run the workflow by hand with **apply** ticked to delete."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deletes exactly the tags in the plan. Only runs when started by hand from
+  # main with apply ticked. The delete token is only available to the
+  # docker-hub-prune environment, never to builds.
+  prune:
+    name: Delete tags
+    needs: plan
+    if: inputs.apply && github.ref == 'refs/heads/main' && needs.plan.outputs.delete != '[]'
+    runs-on: ubuntu-latest
+    environment: docker-hub-prune
+    steps:
+      - name: Delete tags
+        env:
+          USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          TOKEN: ${{ secrets.DOCKERHUB_PRUNE_TOKEN }}
+          TAGS: ${{ needs.plan.outputs.delete }}
+        run: |
+          jwt=$(jq -n --arg id "${USERNAME}" --arg secret "${TOKEN}" '{identifier: $id, secret: $secret}' \
+            | curl -fsS -H 'Content-Type: application/json' -d @- https://hub.docker.com/v2/auth/token \
+            | jq -r .access_token)
+          echo "::add-mask::${jwt}"
+          echo "### Deleted" >> "$GITHUB_STEP_SUMMARY"
+          for tag in $(echo "${TAGS}" | jq -r '.[]'); do
+            echo "Deleting ${IMAGE}:${tag}"
+            curl -fsS -X DELETE -H "Authorization: Bearer ${jwt}" \
+              "https://hub.docker.com/v2/namespaces/${IMAGE%/*}/repositories/${IMAGE#*/}/tags/${tag}"
+            echo "- \`${tag}\`" >> "$GITHUB_STEP_SUMMARY"
+          done
