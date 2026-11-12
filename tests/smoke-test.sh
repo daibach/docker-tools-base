@@ -57,6 +57,14 @@ pass "aws runs (no credentials, as expected)"
 MARIADB=$(run mariadb --version) || fail "mariadb not working"
 pass "$MARIADB"
 
+echo "== Time zones"
+run dpkg -s tzdata >/dev/null 2>&1 || fail "tzdata not installed"
+[ "$(run date +%Z)" = "UTC" ] || fail "default time zone is not UTC"
+# 2024-07-01 12:00 UTC: British Summer Time in London
+[ "$(docker run --rm -e TZ=Europe/London "$IMAGE" date -d @1719835200 '+%H:%M %Z')" = "13:00 BST" ] \
+  || fail "TZ=Europe/London not applied"
+pass "tzdata installed, UTC by default, TZ applied"
+
 echo "== Amazon RDS certificate authorities"
 # Every CA in the RDS bundle is in the system trust store
 run sh -c '

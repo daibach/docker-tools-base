@@ -24,12 +24,13 @@ ENV LANG=C.UTF-8 \
 
 # Debian security updates (without waiting for the upstream image to be
 # rebuilt) and tools. mariadb-client provides mariadb, mariadb-dump and the
-# mysql and mysqldump aliases.
+# mysql and mysqldump aliases. tzdata provides time zones for TZ (the default
+# is UTC).
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      bash ca-certificates curl git gzip jq less mariadb-client unzip zip; \
+      bash ca-certificates curl git gzip jq less mariadb-client tzdata unzip zip; \
     rm -rf /var/lib/apt/lists/*
 
 # Amazon RDS certificate authorities, added to the system trust store so

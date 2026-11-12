@@ -9,6 +9,7 @@ Each image is Debian (`debian:<version>-slim`) with:
 - the MariaDB client (`mariadb`, `mariadb-dump`, and the `mysql` and `mysqldump` aliases)
 - the [Amazon RDS certificate authorities](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html) in the system trust store
 - `bash`, `curl`, `git`, `gzip`, `jq`, `less`, `zip` and `unzip`
+- time zone data (`tzdata`): the time zone is UTC unless `TZ` is set, e.g. `TZ=Europe/London`
 - optionally, [Hugo](https://gohugo.io) (extended edition)
 
 amd64 and arm64. The default command is `bash`; there is no entrypoint and
@@ -228,7 +229,7 @@ Management** page on Docker Hub.
 
 ### Tests
 
-`tests/smoke-test.sh` checks the tools, the trust store, Hugo (building a site
+`tests/smoke-test.sh` checks the tools, time zones, the trust store, Hugo (building a site
 with SCSS), the build info, and dump and restore over verified TLS against
 MariaDB servers. It needs Docker, `jq` and `openssl`, and can be run locally:
 
