@@ -14,7 +14,7 @@ FROM debian:${DEBIAN_VERSION}-slim AS tools
 ARG TARGETARCH
 
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_CLI_VERSION=2.40.3
+ARG AWS_CLI_VERSION=2.40.4
 # Fingerprint of the AWS CLI Team key in keys/aws-cli.asc, which signs every
 # AWS CLI release. From the AWS CLI installation guide.
 ARG AWS_CLI_KEY_FINGERPRINT=FB5DB77FD5C118B80511ADA8A6310ACC4672475C
