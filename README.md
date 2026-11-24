@@ -19,17 +19,17 @@ nothing runs in the background.
 
 | Tag | Example | Contains | Updates |
 |---|---|---|---|
-| `debian<debian>` | `debian13.7` | No Hugo | Debian package updates, AWS CLI releases |
-| `debian<debian>-hugo<hugo>` | `debian13.7-hugo0.169.0` | Exactly that Hugo version | As above |
-| `debian<debian>-hugo<hugo minor>` | `debian13.7-hugo0.169` | That Hugo minor version | Also Hugo patch releases |
+| `debian<debian>` | `debian13.8` | No Hugo | Debian package updates, AWS CLI releases |
+| `debian<debian>-hugo<hugo>` | `debian13.8-hugo0.169.0` | Exactly that Hugo version | As above |
+| `debian<debian>-hugo<hugo minor>` | `debian13.8-hugo0.169` | That Hugo minor version | Also Hugo patch releases |
 
 Current builds:
 
 | Image | Tags |
 |---|---|
-| No Hugo | `debian13.7` |
-| Hugo 0.151 | `debian13.7-hugo0.151.2`, `debian13.7-hugo0.151` |
-| Hugo 0.169 | `debian13.7-hugo0.169.0`, `debian13.7-hugo0.169` |
+| No Hugo | `debian13.8` |
+| Hugo 0.151 | `debian13.8-hugo0.151.2`, `debian13.8-hugo0.151` |
+| Hugo 0.169 | `debian13.8-hugo0.169.0`, `debian13.8-hugo0.169` |
 
 Every tag is rebuilt weekly, so Debian security fixes and new AWS CLI releases
 arrive without the tag changing. Always name a tag: there is no `latest`.
@@ -39,7 +39,7 @@ arrive without the tag changing. Always name a tag: there is no `latest`.
 ### Hugo sites in CodeBuild
 
 Set the CodeBuild project's environment image to a Hugo tag, e.g.
-`cedyrn/tools-parent:debian13.7-hugo0.169`, with Docker Hub registry
+`cedyrn/tools-parent:debian13.8-hugo0.169`, with Docker Hub registry
 credentials (see [Pulling from CodeBuild and ECS](#pulling-from-codebuild-and-ecs)).
 The buildspec then has `hugo` and `aws` available:
 
@@ -58,7 +58,7 @@ version tag picks up Hugo patch releases; use the exact tag to avoid that.
 ### Child images
 
 ```dockerfile
-FROM cedyrn/tools-parent:debian13.7
+FROM cedyrn/tools-parent:debian13.8
 COPY runtasks.sh /runtasks.sh
 CMD ["/runtasks.sh"]
 ```
@@ -112,8 +112,8 @@ inherited by child images:
 ```json
 {
   "image": "cedyrn/tools-parent",
-  "tags": ["debian13.7-hugo0.169.0", "debian13.7-hugo0.169"],
-  "debian_version": "13.7",
+  "tags": ["debian13.8-hugo0.169.0", "debian13.8-hugo0.169"],
+  "debian_version": "13.8",
   "hugo_version": "0.169.0",
   "aws_cli_version": "2.40.1",
   "mariadb_client_version": "11.8.6",
@@ -135,7 +135,7 @@ exact patch version it is built from:
 
 ```json
 {
-  "debian": "13.7",
+  "debian": "13.8",
   "hugo": {
     "0.151": "0.151.2",
     "0.169": "0.169.0"
@@ -144,7 +144,7 @@ exact patch version it is built from:
 ```
 
 The image without Hugo is always built. Images are built from the exact
-upstream tag (`debian:13.7-slim`), never the moving `debian:trixie-slim`.
+upstream tag (`debian:13.8-slim`), never the moving `debian:trixie-slim`.
 
 - **Add a Hugo version:** add a line with its latest patch version. Its image is built automatically.
 - **Drop a Hugo version:** remove its line. Its tags stay on Docker Hub, without updates, until they are pruned.
@@ -240,11 +240,11 @@ with SCSS), the build info, and dump and restore over verified TLS against
 MariaDB servers. It needs Docker, `jq` and `openssl`, and can be run locally:
 
 ```sh
-docker build -t tools-parent-test:base --target base --build-arg DEBIAN_VERSION=13.7 .
-tests/smoke-test.sh tools-parent-test:base 13.7
+docker build -t tools-parent-test:base --target base --build-arg DEBIAN_VERSION=13.8 .
+tests/smoke-test.sh tools-parent-test:base 13.8
 
-docker build -t tools-parent-test:hugo --target hugo --build-arg DEBIAN_VERSION=13.7 --build-arg HUGO_VERSION=0.169.0 .
-tests/smoke-test.sh tools-parent-test:hugo 13.7 0.169.0
+docker build -t tools-parent-test:hugo --target hugo --build-arg DEBIAN_VERSION=13.8 --build-arg HUGO_VERSION=0.169.0 .
+tests/smoke-test.sh tools-parent-test:hugo 13.8 0.169.0
 ```
 
 `MARIADB_SERVERS` sets the MariaDB server versions to test against (default
