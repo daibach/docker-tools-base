@@ -166,6 +166,12 @@ The AWS CLI version is the `AWS_CLI_VERSION` build argument in the `Dockerfile`.
 | Trivy | 3 days | Manual: update the `*_SHA256` checksums in `.github/actions/setup-trivy/action.yml` in the same PR |
 | GitHub Actions (non-major) | | Automatic once the build passes |
 
+Debian point releases reach the package archive days before the `debian`
+image on Docker Hub, so builds pick up the new release's packages before
+Renovate can bump `versions.json`. In that gap the smoke test accepts the
+newer point release with a warning, and the current tags (e.g. `debian13.7`)
+carry its packages until the bump.
+
 **Urgent updates:** open the Dependency Dashboard issue and tick the box to
 make Renovate check immediately, or edit `versions.json` by hand.
 
