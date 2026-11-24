@@ -37,9 +37,27 @@ run() {
 
 echo "== Debian"
 DEBIAN=$(run cat /etc/debian_version)
+# apt-get upgrade installs from the Debian archive, which gets a point release
+# days before the debian image on Docker Hub (and so before Renovate can bump
+# versions.json). A newer point release of the same major version is expected
+# in that gap and only warns; anything else fails.
+newer_point_release() { # <actual> <expected>, both <major>.<minor>[.<patch>]
+  case "$1" in *.*) ;; *) return 1 ;; esac
+  case "$2" in *.*) ;; *) return 1 ;; esac
+  set -- "${1%%.*}" "$(echo "${1#*.}" | cut -d. -f1)" "${2%%.*}" "$(echo "${2#*.}" | cut -d. -f1)"
+  for n in "$@"; do
+    case "$n" in '' | *[!0-9]*) return 1 ;; esac
+  done
+  [ "$1" -eq "$3" ] && [ "$2" -gt "$4" ]
+}
 case "$DEBIAN" in
   "$EXPECTED_DEBIAN" | "$EXPECTED_DEBIAN".*) pass "Debian $DEBIAN" ;;
-  *) fail "Debian $DEBIAN, expected $EXPECTED_DEBIAN" ;;
+  *)
+    newer_point_release "$DEBIAN" "$EXPECTED_DEBIAN" \
+      || fail "Debian $DEBIAN, expected $EXPECTED_DEBIAN"
+    pass "Debian $DEBIAN"
+    echo "::warning title=Newer Debian point release::Debian $DEBIAN is newer than versions.json ($EXPECTED_DEBIAN). Bump versions.json once debian:$DEBIAN-slim is on Docker Hub (Renovate opens the PR)."
+    ;;
 esac
 
 echo "== Tools"
